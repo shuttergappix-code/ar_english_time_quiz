@@ -113,8 +113,8 @@
         ฝึกบอกเวลาแบบอังกฤษ เช่น <b>past, to, quarter, half past</b>
       </p>
       <p>
-        ใช้นิ้วชี้ชี้คำตอบที่ถูกต้องค้างไว้ <b>4 วินาที</b> เพื่อเลือกคำตอบ
-        มีทั้งหมด 30 ข้อ แบ่งเป็น 6 ชุด ชุดละ 5 ข้อ
+        ใช้นิ้วชี้ชี้คำตอบที่ถูกต้องค้างไว้ <b>2 วินาที</b> เพื่อเลือกคำตอบ
+        มีทั้งหมด 30 ข้อ แบ่งเป็น 6 ชุด ชุดละ 5 ข้อ พร้อมเสียงประกอบสนุก ๆ
       </p>
       <div class="buttons">
         <button id="startBtn">เปิดกล้องและเริ่มเกม</button>
@@ -143,7 +143,7 @@
     const TOTAL_QUESTIONS = 30;
     const QUESTIONS_PER_SET = 5;
     const TOTAL_SETS = 6;
-    const HOLD_TO_ANSWER_MS = 4000;
+    const HOLD_TO_ANSWER_MS = 2000;
     const HOLD_TO_CONTINUE_MS = 1500;
 
     let W = 0;
@@ -160,6 +160,12 @@
     let pointerVisible = false;
     let pointerIsPointing = false;
     let mouseDown = false;
+
+    // ระบบเสียงเอฟเฟกต์ในตัว ไม่ต้องใช้ไฟล์เสียงแยก
+    let audioCtx = null;
+    let soundEnabled = true;
+    let lastHoverSoundIndex = -1;
+    let lastTickSecond = -1;
 
     const rawQuestions = [
       { h: 1,  m: 0,  a: "It's one o'clock." },
@@ -290,6 +296,123 @@
       return { x: lerp(prev.x, next.x, amount), y: lerp(prev.y, next.y, amount) };
     }
 
+    function initAudio() {
+      if (!soundEnabled) return;
+      try {
+        if (!audioCtx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AudioContext();
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (e) {
+        soundEnabled = false;
+      }
+    }
+
+    function tone(freq, duration = 0.12, type = 'sine', volume = 0.08, delay = 0) {
+      if (!soundEnabled || !audioCtx) return;
+      const t = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(volume, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + duration + 0.03);
+    }
+
+    function noise(duration = 0.16, volume = 0.08, delay = 0) {
+      if (!soundEnabled || !audioCtx) return;
+      const t = audioCtx.currentTime + delay;
+      const bufferSize = Math.floor(audioCtx.sampleRate * duration);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      }
+
+      const source = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(900, t);
+
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      source.buffer = buffer;
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(t);
+      source.stop(t + duration);
+    }
+
+    function playSound(name) {
+      if (!soundEnabled) return;
+      initAudio();
+      if (!audioCtx) return;
+
+      if (name === 'start') {
+        tone(392, 0.11, 'triangle', 0.07, 0.00);
+        tone(523, 0.11, 'triangle', 0.07, 0.10);
+        tone(659, 0.16, 'triangle', 0.08, 0.20);
+        tone(784, 0.20, 'sine', 0.075, 0.34);
+      }
+
+      if (name === 'hover') {
+        tone(880, 0.045, 'sine', 0.035, 0.00);
+      }
+
+      if (name === 'tick') {
+        tone(1046, 0.045, 'square', 0.035, 0.00);
+      }
+
+      if (name === 'correct') {
+        tone(523, 0.10, 'triangle', 0.08, 0.00);
+        tone(659, 0.10, 'triangle', 0.08, 0.10);
+        tone(784, 0.12, 'triangle', 0.085, 0.20);
+        tone(1046, 0.24, 'sine', 0.09, 0.34);
+        noise(0.12, 0.045, 0.10);
+      }
+
+      if (name === 'wrong') {
+        tone(220, 0.12, 'sawtooth', 0.055, 0.00);
+        tone(196, 0.16, 'sawtooth', 0.045, 0.12);
+      }
+
+      if (name === 'set') {
+        tone(392, 0.10, 'triangle', 0.07, 0.00);
+        tone(494, 0.10, 'triangle', 0.07, 0.10);
+        tone(587, 0.10, 'triangle', 0.07, 0.20);
+        tone(784, 0.22, 'triangle', 0.08, 0.34);
+      }
+
+      if (name === 'finish') {
+        tone(392, 0.10, 'triangle', 0.08, 0.00);
+        tone(523, 0.10, 'triangle', 0.08, 0.10);
+        tone(659, 0.10, 'triangle', 0.08, 0.20);
+        tone(784, 0.12, 'triangle', 0.08, 0.32);
+        tone(1046, 0.30, 'sine', 0.09, 0.48);
+        noise(0.35, 0.06, 0.18);
+      }
+
+      if (name === 'continue') {
+        tone(660, 0.08, 'triangle', 0.06, 0.00);
+        tone(880, 0.11, 'triangle', 0.06, 0.09);
+      }
+    }
+
+
     function shuffle(arr) {
       const out = arr.slice();
       for (let i = out.length - 1; i > 0; i--) {
@@ -349,6 +472,7 @@
       if (game.index >= TOTAL_QUESTIONS) {
         game.ended = true;
         game.showSetBreak = false;
+        playSound('finish');
         spawnConfetti(140);
         return;
       }
@@ -357,6 +481,7 @@
         game.showSetBreak = true;
         game.continueStarted = 0;
         game.continueProgress = 0;
+        playSound('set');
         spawnConfetti(70);
         return;
       }
@@ -365,6 +490,7 @@
     }
 
     function continueNextSet() {
+      playSound('continue');
       game.showSetBreak = false;
       game.setScore = 0;
       prepareChoices();
@@ -379,9 +505,11 @@
         game.score++;
         game.setScore++;
         game.feedback = { ok: true, selected: i, correct: correctIndex, text: "ถูกต้อง! Excellent! 🌟" };
+        playSound('correct');
         spawnConfetti(60);
       } else {
         game.feedback = { ok: false, selected: i, correct: correctIndex, text: "ยังไม่ถูกนะ คำตอบที่ถูกคือข้อสีเขียว" };
+        playSound('wrong');
       }
 
       game.feedbackUntil = performance.now() + 1800;
@@ -613,8 +741,17 @@
           game.selectedIndex = hit;
           game.selectedStarted = now;
           game.selectedProgress = 0;
+          lastHoverSoundIndex = hit;
+          lastTickSecond = -1;
+          playSound('hover');
         } else {
           game.selectedProgress = clamp((now - game.selectedStarted) / HOLD_TO_ANSWER_MS, 0, 1);
+          const remainMs = Math.max(0, HOLD_TO_ANSWER_MS - (now - game.selectedStarted));
+          const tickSecond = Math.ceil(remainMs / 1000);
+          if (tickSecond !== lastTickSecond && tickSecond > 0) {
+            lastTickSecond = tickSecond;
+            playSound('tick');
+          }
           if (game.selectedProgress >= 1) {
             answerChoice(hit);
           }
@@ -623,6 +760,8 @@
         game.selectedIndex = -1;
         game.selectedStarted = 0;
         game.selectedProgress = 0;
+        lastHoverSoundIndex = -1;
+        lastTickSecond = -1;
       }
     }
 
@@ -723,7 +862,7 @@
       ctx.textAlign = 'right';
       ctx.fillStyle = '#334155';
       ctx.font = `700 ${clamp(W * 0.012, 12, 17)}px Sarabun, sans-serif`;
-      ctx.fillText('ชี้คำตอบค้าง 4 วิ', h.x + h.w - 20, h.y + h.h * 0.72);
+      ctx.fillText('ชี้คำตอบค้าง 2 วิ', h.x + h.w - 20, h.y + h.h * 0.72);
     }
 
     function drawClock() {
@@ -983,7 +1122,7 @@
       if (game.ended || game.showSetBreak || game.feedback) return;
 
       const text = pointerVisible
-        ? (pointerIsPointing ? 'เล็งคำตอบ แล้วชี้ค้างไว้ 4 วินาที' : 'ยกนิ้วชี้ขึ้นเพื่อเลือกคำตอบ')
+        ? (pointerIsPointing ? 'เล็งคำตอบ แล้วชี้ค้างไว้ 2 วินาที' : 'ยกนิ้วชี้ขึ้นเพื่อเลือกคำตอบ')
         : 'ยกมือขึ้นหน้ากล้อง แล้วใช้นิ้วชี้เลือกคำตอบ';
 
       const y = H - clamp(H * 0.055, 42, 58);
@@ -1118,6 +1257,8 @@
     async function initCameraGame() {
       errorBox.textContent = '';
       useDemoOnly = false;
+      initAudio();
+      playSound('start');
 
       try {
         if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
@@ -1162,6 +1303,8 @@
     function startDemoOnly() {
       useDemoOnly = true;
       cameraStarted = false;
+      initAudio();
+      playSound('start');
       startOverlay.style.display = 'none';
       resetGame();
     }
