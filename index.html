@@ -114,7 +114,7 @@
       </p>
       <p>
         ใช้นิ้วชี้ชี้คำตอบที่ถูกต้องค้างไว้ <b>2 วินาที</b> เพื่อเลือกคำตอบ
-        มีทั้งหมด 30 ข้อ แบ่งเป็น 6 ชุด ชุดละ 5 ข้อ พร้อมเสียงประกอบสนุก ๆ
+        มีทั้งหมด 30 ข้อ แบ่งเป็น 6 ชุด ชุดละ 5 ข้อ พร้อมเสียงประกอบและดนตรีพื้นหลังเร้าใจ
       </p>
       <div class="buttons">
         <button id="startBtn">เปิดกล้องและเริ่มเกม</button>
@@ -164,6 +164,11 @@
     // ระบบเสียงเอฟเฟกต์ในตัว ไม่ต้องใช้ไฟล์เสียงแยก
     let audioCtx = null;
     let soundEnabled = true;
+    let musicEnabled = true;
+    let musicStarted = false;
+    let musicInterval = null;
+    let musicStep = 0;
+    let musicVolume = 0.032;
     let lastHoverSoundIndex = -1;
     let lastTickSecond = -1;
 
@@ -410,6 +415,157 @@
         tone(660, 0.08, 'triangle', 0.06, 0.00);
         tone(880, 0.11, 'triangle', 0.06, 0.09);
       }
+    }
+
+
+
+    function musicTone(freq, duration = 0.11, type = 'square', volume = musicVolume, delay = 0) {
+      if (!soundEnabled || !musicEnabled || !audioCtx) return;
+      const t = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(type === 'sawtooth' ? 700 : 1600, t);
+
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(volume, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + duration + 0.03);
+    }
+
+    function musicNoise(duration = 0.045, volume = 0.018, delay = 0, highpass = 2600) {
+      if (!soundEnabled || !musicEnabled || !audioCtx) return;
+      const t = audioCtx.currentTime + delay;
+      const bufferSize = Math.floor(audioCtx.sampleRate * duration);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      }
+
+      const source = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(highpass, t);
+
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      source.buffer = buffer;
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(t);
+      source.stop(t + duration);
+    }
+
+    function startMusic() {
+      if (!soundEnabled || !musicEnabled) return;
+      initAudio();
+      if (!audioCtx || musicStarted) return;
+
+      musicStarted = true;
+      musicStep = 0;
+
+      // จังหวะเร็วแบบเกมโชว์ ประมาณ 150 BPM
+      const melody = [523, 659, 784, 659, 587, 740, 880, 740, 659, 784, 988, 784, 587, 659, 784, 1046];
+      const bass = [130, 130, 196, 196, 146, 146, 220, 220];
+
+      musicInterval = setInterval(() => {
+        if (!musicEnabled || !soundEnabled || !audioCtx) return;
+
+        const step = musicStep % 16;
+
+        // Hi-hat ทุกจังหวะย่อย
+        musicNoise(0.035, 0.010, 0, 4200);
+
+        // Kick เบา ๆ ทุก 4 step
+        if (step % 4 === 0) {
+          musicTone(bass[(musicStep >> 2) % bass.length], 0.13, 'sawtooth', musicVolume * 1.15);
+          musicNoise(0.055, 0.018, 0, 140);
+        }
+
+        // Snare แบบสั้น ๆ
+        if (step === 4 || step === 12) {
+          musicNoise(0.075, 0.024, 0, 900);
+        }
+
+        // Melody ให้รู้สึกตื่นเต้น แต่ไม่ดังเกินเสียงเฉลย
+        if (step % 2 === 0 || step === 15) {
+          musicTone(melody[musicStep % melody.length], 0.10, 'triangle', musicVolume * 0.92);
+        }
+
+        // Arpeggio ตอนท้ายห้องเพลง
+        if (step === 14) {
+          musicTone(784, 0.08, 'sine', musicVolume * 0.72, 0.06);
+          musicTone(1046, 0.09, 'sine', musicVolume * 0.70, 0.12);
+        }
+
+        musicStep++;
+      }, 100);
+    }
+
+    function stopMusic() {
+      if (musicInterval) {
+        clearInterval(musicInterval);
+        musicInterval = null;
+      }
+      musicStarted = false;
+    }
+
+    function toggleMusic() {
+      musicEnabled = !musicEnabled;
+      if (musicEnabled) {
+        playSound('continue');
+        startMusic();
+      } else {
+        stopMusic();
+        playSound('hover');
+      }
+    }
+
+    function getMusicButton() {
+      const w = clamp(W * 0.105, 86, 126);
+      const h = clamp(H * 0.052, 38, 48);
+      return {
+        x: W - w - clamp(W * 0.024, 14, 26),
+        y: clamp(H * 0.018, 8, 16) + clamp(H * 0.13, W > H ? 78 : 94, W > H ? 108 : 128) + 10,
+        w,
+        h
+      };
+    }
+
+    function drawMusicButton() {
+      const b = getMusicButton();
+      const label = musicEnabled ? '🎵 ON' : '🔇 OFF';
+      const fill = musicEnabled ? 'rgba(250, 204, 21, .88)' : 'rgba(226, 232, 240, .78)';
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.25)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 6;
+      drawRoundedFill(b.x, b.y, b.w, b.h, 18, fill, 'rgba(255,255,255,.9)', 2);
+      ctx.shadowColor = 'transparent';
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `800 ${clamp(b.h * 0.38, 14, 18)}px Sarabun, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
+      ctx.restore();
     }
 
 
@@ -696,6 +852,13 @@
         game.selectedProgress = 0;
         game.continueStarted = 0;
         game.continueProgress = 0;
+        return;
+      }
+
+      if (pointInRect(pointer, getMusicButton())) {
+        game.selectedIndex = -1;
+        game.selectedStarted = 0;
+        game.selectedProgress = 0;
         return;
       }
 
@@ -1242,6 +1405,7 @@
 
       drawBackground(now);
       drawHud();
+      drawMusicButton();
       drawClock();
       drawChoices();
       drawInstruction();
@@ -1259,6 +1423,7 @@
       useDemoOnly = false;
       initAudio();
       playSound('start');
+      startMusic();
 
       try {
         if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
@@ -1305,12 +1470,24 @@
       cameraStarted = false;
       initAudio();
       playSound('start');
+      startMusic();
       startOverlay.style.display = 'none';
       resetGame();
     }
 
     startBtn.addEventListener('click', initCameraGame);
     demoBtn.addEventListener('click', startDemoOnly);
+
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopMusic();
+      } else if (musicEnabled && (cameraStarted || useDemoOnly)) {
+        startMusic();
+      }
+    });
+
+
 
     function pointerFromEvent(ev) {
       const rect = canvas.getBoundingClientRect();
@@ -1323,6 +1500,12 @@
       pointer = pointerFromEvent(ev);
       pointerVisible = true;
       pointerIsPointing = true;
+
+      if (pointInRect(pointer, getMusicButton())) {
+        initAudio();
+        toggleMusic();
+        mouseDown = false;
+      }
     }
 
     function handleMove(ev) {
